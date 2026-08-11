@@ -167,18 +167,29 @@ app.patch("/api/:baseId/presupuestos/:id/cobro", async (req, res) => {
   try {
     const { incremento } = req.body;
     // Primero leemos el registro actual, para saber cuánto lleva cobrado
+    // y cuál es el total (para saber si con este pago queda saldado)
     const actual = await airtableFetch(req.params.baseId, "Presupuestos", {
       path: `/${req.params.id}`,
     });
     const cobradoActual = actual.fields.Monto_Cobrado || 0;
+    const total = actual.fields.Total || 0;
     const nuevoTotal = cobradoActual + (Number(incremento) || 0);
+    const quedoSaldado = nuevoTotal >= total && total > 0;
 
     await airtableFetch(req.params.baseId, "Presupuestos", {
       method: "PATCH",
       path: `/${req.params.id}`,
-      body: { fields: { Monto_Cobrado: nuevoTotal } },
+      body: {
+        fields: {
+          Monto_Cobrado: nuevoTotal,
+          // Si con este pago se llega o se supera el total, lo marcamos
+          // como Cobrado automáticamente, para que "Mis presupuestos"
+          // quede sincronizado sin que haya que tocarlo a mano ahí también.
+          Cobrado: quedoSaldado,
+        },
+      },
     });
-    res.json({ ok: true, montoCobrado: nuevoTotal });
+    res.json({ ok: true, montoCobrado: nuevoTotal, cobrado: quedoSaldado });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -191,10 +202,26 @@ app.patch("/api/:baseId/presupuestos/:id/cobro", async (req, res) => {
 app.patch("/api/:baseId/presupuestos/:id/cobrado", async (req, res) => {
   try {
     const { cobrado } = req.body;
+    const fieldsAActualizar = { Cobrado: !!cobrado };
+
+    if (cobrado) {
+      // Al marcar como Cobrado a mano, completamos Monto_Cobrado con el
+      // total, para que el saldo pendiente quede en cero.
+      const actual = await airtableFetch(req.params.baseId, "Presupuestos", {
+        path: `/${req.params.id}`,
+      });
+      fieldsAActualizar.Monto_Cobrado = actual.fields.Total || 0;
+    } else {
+      // Al desmarcar, reseteamos el monto cobrado a 0 — el presupuesto
+      // vuelve completo a "Cobros pendientes", sin dejar memoria de un
+      // cobro parcial anterior.
+      fieldsAActualizar.Monto_Cobrado = 0;
+    }
+
     await airtableFetch(req.params.baseId, "Presupuestos", {
       method: "PATCH",
       path: `/${req.params.id}`,
-      body: { fields: { Cobrado: !!cobrado } },
+      body: { fields: fieldsAActualizar },
     });
     res.json({ ok: true });
   } catch (err) {
