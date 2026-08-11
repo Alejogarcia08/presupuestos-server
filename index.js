@@ -202,6 +202,51 @@ app.patch("/api/:baseId/presupuestos/:id/cobrado", async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------
+// DELETE /api/:baseId/presupuestos/:id -> borra un presupuesto Y sus items
+// -----------------------------------------------------------------------
+app.delete("/api/:baseId/presupuestos/:id", async (req, res) => {
+  try {
+    // Primero borramos las líneas (Items_Presupuestos) ligadas a este
+    // presupuesto, para no dejar registros huérfanos en Airtable.
+    const itemsData = await airtableFetch(req.params.baseId, "Items_Presupuestos");
+    const idsABorrar = itemsData.records
+      .filter((r) => (r.fields.Presupuesto || []).includes(req.params.id))
+      .map((r) => r.id);
+
+    for (const itemId of idsABorrar) {
+      await airtableFetch(req.params.baseId, "Items_Presupuestos", {
+        method: "DELETE",
+        path: `/${itemId}`,
+      });
+    }
+
+    await airtableFetch(req.params.baseId, "Presupuestos", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// DELETE /api/:baseId/productos/:id -> borra un producto del catálogo
+// -----------------------------------------------------------------------
+app.delete("/api/:baseId/productos/:id", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Productos_Servicios", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/:baseId/presupuestos", async (req, res) => {
   const { baseId } = req.params;
   try {
