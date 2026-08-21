@@ -1,30 +1,17 @@
 // -----------------------------------------------------------------------
 // SERVIDOR — el único lugar del proyecto que tiene el Airtable Token
 // -----------------------------------------------------------------------
-// Este archivo levanta un pequeño servidor que:
-//   1) Recibe pedidos desde tu formulario de React (que corre en otra
-//      terminal, en localhost:5173)
-//   2) Habla con Airtable usando el token secreto (que vive en .env,
-//      nunca en el código, nunca en el navegador)
-//   3) Le devuelve la respuesta a React
-//
-// Se prende con: npm run dev   (desde ESTA carpeta, presupuestos-server)
-// -----------------------------------------------------------------------
-
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
 
 const app = express();
-app.use(cors());          // permite que React (otro puerto) le pueda hablar a este servidor
-app.use(express.json());  // permite recibir JSON en el body de los pedidos
+app.use(cors());
+app.use(express.json());
 
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const AIRTABLE_API = "https://api.airtable.com/v0";
 
-// -----------------------------------------------------------------------
-// Función helper: hace un pedido a la API de Airtable con el token puesto
-// -----------------------------------------------------------------------
 async function airtableFetch(baseId, tabla, opciones = {}) {
   const url = `${AIRTABLE_API}/${baseId}/${encodeURIComponent(tabla)}${opciones.path || ""}`;
   const res = await fetch(url, {
@@ -43,9 +30,10 @@ async function airtableFetch(baseId, tabla, opciones = {}) {
   return data;
 }
 
-// -----------------------------------------------------------------------
-// GET /api/:baseId/clientes  -> lista los clientes de esa base
-// -----------------------------------------------------------------------
+// =========================================================================
+// MODULO PRESUPUESTOS
+// =========================================================================
+
 app.get("/api/:baseId/clientes", async (req, res) => {
   try {
     const data = await airtableFetch(req.params.baseId, "Clientes");
@@ -64,10 +52,6 @@ app.get("/api/:baseId/clientes", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// POST /api/:baseId/clientes  -> crea un cliente nuevo
-// body: { nombre, empresa?, telefono?, email? }
-// -----------------------------------------------------------------------
 app.post("/api/:baseId/clientes", async (req, res) => {
   try {
     const { nombre, empresa, telefono, email } = req.body;
@@ -88,9 +72,6 @@ app.post("/api/:baseId/clientes", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// GET /api/:baseId/productos  -> lista el catálogo de Productos_Servicios
-// -----------------------------------------------------------------------
 app.get("/api/:baseId/productos", async (req, res) => {
   try {
     const data = await airtableFetch(req.params.baseId, "Productos_Servicios");
@@ -105,9 +86,18 @@ app.get("/api/:baseId/productos", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// GET /api/:baseId/presupuestos/:id/items -> los ítems de un presupuesto puntual
-// -----------------------------------------------------------------------
+app.delete("/api/:baseId/productos/:id", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Productos_Servicios", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/:baseId/presupuestos/:id/items", async (req, res) => {
   try {
     const data = await airtableFetch(req.params.baseId, "Items_Presupuestos");
@@ -126,17 +116,6 @@ app.get("/api/:baseId/presupuestos/:id/items", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// POST /api/:baseId/presupuestos  -> crea un presupuesto completo
-// body: { clienteId, lineas: [{ productoId?, nombre, precio, cantidad }] }
-//
-// Si una línea NO tiene productoId (fue cargada como "ítem personalizado"),
-// primero se crea el producto en Productos_Servicios, y de ahí en adelante
-// queda disponible en el catálogo para la próxima vez.
-// -----------------------------------------------------------------------
-// -----------------------------------------------------------------------
-// GET /api/:baseId/presupuestos  -> lista los presupuestos (para "Mis presupuestos")
-// -----------------------------------------------------------------------
 app.get("/api/:baseId/presupuestos", async (req, res) => {
   try {
     const data = await airtableFetch(req.params.baseId, "Presupuestos");
@@ -151,7 +130,6 @@ app.get("/api/:baseId/presupuestos", async (req, res) => {
       montoCobrado: r.fields.Monto_Cobrado || 0,
       saldoPendiente: r.fields.Saldo_Pendiente || 0,
     }));
-    // Los más nuevos primero
     presupuestos.sort((a, b) => (b.numero || 0) - (a.numero || 0));
     res.json(presupuestos);
   } catch (err) {
@@ -159,15 +137,9 @@ app.get("/api/:baseId/presupuestos", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// PATCH /api/:baseId/presupuestos/:id/cobro  -> registra un cobro parcial/total
-// body: { montoCobrado: number }
-// -----------------------------------------------------------------------
 app.patch("/api/:baseId/presupuestos/:id/cobro", async (req, res) => {
   try {
     const { incremento } = req.body;
-    // Primero leemos el registro actual, para saber cuánto lleva cobrado
-    // y cuál es el total (para saber si con este pago queda saldado)
     const actual = await airtableFetch(req.params.baseId, "Presupuestos", {
       path: `/${req.params.id}`,
     });
@@ -182,9 +154,6 @@ app.patch("/api/:baseId/presupuestos/:id/cobro", async (req, res) => {
       body: {
         fields: {
           Monto_Cobrado: nuevoTotal,
-          // Si con este pago se llega o se supera el total, lo marcamos
-          // como Cobrado automáticamente, para que "Mis presupuestos"
-          // quede sincronizado sin que haya que tocarlo a mano ahí también.
           Cobrado: quedoSaldado,
         },
       },
@@ -195,26 +164,17 @@ app.patch("/api/:baseId/presupuestos/:id/cobro", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// PATCH /api/:baseId/presupuestos/:id/cobrado  -> marca/desmarca "Cobrado"
-// body: { cobrado: true | false }
-// -----------------------------------------------------------------------
 app.patch("/api/:baseId/presupuestos/:id/cobrado", async (req, res) => {
   try {
     const { cobrado } = req.body;
     const fieldsAActualizar = { Cobrado: !!cobrado };
 
     if (cobrado) {
-      // Al marcar como Cobrado a mano, completamos Monto_Cobrado con el
-      // total, para que el saldo pendiente quede en cero.
       const actual = await airtableFetch(req.params.baseId, "Presupuestos", {
         path: `/${req.params.id}`,
       });
       fieldsAActualizar.Monto_Cobrado = actual.fields.Total || 0;
     } else {
-      // Al desmarcar, reseteamos el monto cobrado a 0 — el presupuesto
-      // vuelve completo a "Cobros pendientes", sin dejar memoria de un
-      // cobro parcial anterior.
       fieldsAActualizar.Monto_Cobrado = 0;
     }
 
@@ -229,13 +189,8 @@ app.patch("/api/:baseId/presupuestos/:id/cobrado", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// DELETE /api/:baseId/presupuestos/:id -> borra un presupuesto Y sus items
-// -----------------------------------------------------------------------
 app.delete("/api/:baseId/presupuestos/:id", async (req, res) => {
   try {
-    // Primero borramos las líneas (Items_Presupuestos) ligadas a este
-    // presupuesto, para no dejar registros huérfanos en Airtable.
     const itemsData = await airtableFetch(req.params.baseId, "Items_Presupuestos");
     const idsABorrar = itemsData.records
       .filter((r) => (r.fields.Presupuesto || []).includes(req.params.id))
@@ -259,27 +214,11 @@ app.delete("/api/:baseId/presupuestos/:id", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// DELETE /api/:baseId/productos/:id -> borra un producto del catálogo
-// -----------------------------------------------------------------------
-app.delete("/api/:baseId/productos/:id", async (req, res) => {
-  try {
-    await airtableFetch(req.params.baseId, "Productos_Servicios", {
-      method: "DELETE",
-      path: `/${req.params.id}`,
-    });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.post("/api/:baseId/presupuestos", async (req, res) => {
   const { baseId } = req.params;
   try {
     const { clienteId, lineas } = req.body;
 
-    // 1) Para cada línea sin productoId, creamos el producto en el catálogo
     const lineasConProducto = [];
     for (const linea of lineas) {
       let productoId = linea.productoId;
@@ -293,7 +232,6 @@ app.post("/api/:baseId/presupuestos", async (req, res) => {
       lineasConProducto.push({ ...linea, productoId });
     }
 
-    // 2) Creamos el registro del Presupuesto (todavía sin líneas linkeadas)
     const presupuesto = await airtableFetch(baseId, "Presupuestos", {
       method: "POST",
       body: {
@@ -304,7 +242,6 @@ app.post("/api/:baseId/presupuestos", async (req, res) => {
       },
     });
 
-    // 3) Creamos cada línea en Items_Presupuestos, linkeada al presupuesto y al producto
     for (const linea of lineasConProducto) {
       await airtableFetch(baseId, "Items_Presupuestos", {
         method: "POST",
@@ -319,9 +256,6 @@ app.post("/api/:baseId/presupuestos", async (req, res) => {
       });
     }
 
-    // 4) Intentamos actualizar el Total a mano (si el campo es un rollup/fórmula
-    //    automática en tu base, Airtable va a rechazar esta escritura — lo
-    //    ignoramos sin romper nada, porque en ese caso ya se calcula solo).
     const total = lineasConProducto.reduce((acc, l) => acc + l.precio * l.cantidad, 0);
     try {
       await airtableFetch(baseId, "Presupuestos", {
@@ -334,6 +268,230 @@ app.post("/api/:baseId/presupuestos", async (req, res) => {
     }
 
     res.json({ ok: true, presupuestoId: presupuesto.id, total });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================================
+// MODULO TURNOS (base separada — usa el mismo :baseId generico, solo que
+// para este modulo apunta a la base "Sistema Turnos", no a la de
+// Presupuestos. El front decide que baseId mandar segun el cliente/rubro)
+// =========================================================================
+
+app.get("/api/:baseId/pacientes", async (req, res) => {
+  try {
+    const data = await airtableFetch(req.params.baseId, "Pacientes");
+    const pacientes = data.records.map((r) => ({
+      id: r.id,
+      nombre: r.fields.Name || "",
+      telefono: r.fields.Telefono || "",
+      email: r.fields.Email || "",
+      notas: r.fields.Notas || "",
+    }));
+    res.json(pacientes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/:baseId/pacientes", async (req, res) => {
+  try {
+    const { nombre, telefono, email, notas } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Pacientes", {
+      method: "POST",
+      body: {
+        fields: {
+          Name: nombre,
+          ...(telefono ? { Telefono: telefono } : {}),
+          ...(email ? { Email: email } : {}),
+          ...(notas ? { Notas: notas } : {}),
+        },
+      },
+    });
+    res.json({
+      id: data.id,
+      nombre: data.fields.Name || "",
+      telefono: data.fields.Telefono || "",
+      email: data.fields.Email || "",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/pacientes/:id", async (req, res) => {
+  try {
+    const { nombre, telefono, email, notas } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Pacientes", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: {
+        fields: {
+          ...(nombre !== undefined ? { Name: nombre } : {}),
+          ...(telefono !== undefined ? { Telefono: telefono } : {}),
+          ...(email !== undefined ? { Email: email } : {}),
+          ...(notas !== undefined ? { Notas: notas } : {}),
+        },
+      },
+    });
+    res.json({
+      id: data.id,
+      nombre: data.fields.Name || "",
+      telefono: data.fields.Telefono || "",
+      email: data.fields.Email || "",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/:baseId/pacientes/:id", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Pacientes", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/:baseId/turnos", async (req, res) => {
+  try {
+    const data = await airtableFetch(req.params.baseId, "Turnos");
+    const turnos = data.records.map((r) => ({
+      id: r.id,
+      pacienteId: (r.fields.Paciente && r.fields.Paciente.length) ? r.fields.Paciente[0] : null,
+      fecha: r.fields.Fecha || "",
+      hora: r.fields.Hora || "",
+      notas: r.fields.Notas_Turno || "",
+      estado: r.fields.Estado || "Confirmado",
+      recordatorioEnviado: !!r.fields.Recordatorio_Enviado,
+    }));
+    // Los mas proximos primero
+    turnos.sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
+    res.json(turnos);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/:baseId/turnos", async (req, res) => {
+  try {
+    const { pacienteId, fecha, hora, notas } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Turnos", {
+      method: "POST",
+      body: {
+        fields: {
+          Paciente: [pacienteId],
+          Fecha: fecha,
+          Hora: hora,
+          ...(notas ? { Notas_Turno: notas } : {}),
+          Estado: "Confirmado",
+        },
+      },
+    });
+    res.json({ ok: true, id: data.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/turnos/:id/estado", async (req, res) => {
+  try {
+    const { estado } = req.body;
+    await airtableFetch(req.params.baseId, "Turnos", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: { fields: { Estado: estado } },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/turnos/:id/reprogramar", async (req, res) => {
+  try {
+    const { fecha, hora } = req.body;
+    await airtableFetch(req.params.baseId, "Turnos", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: { fields: { Fecha: fecha, Hora: hora } },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/:baseId/turnos/:id", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Turnos", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================================
+// MODULO TURNOS RECURRENTES ("reglas" que generan turnos cada semana)
+// =========================================================================
+
+app.get("/api/:baseId/turnos-recurrentes", async (req, res) => {
+  try {
+    const data = await airtableFetch(req.params.baseId, "Turnos_Recurrentes");
+    const reglas = data.records.map((r) => ({
+      id: r.id,
+      pacienteId: (r.fields.Paciente && r.fields.Paciente.length) ? r.fields.Paciente[0] : null,
+      diaSemana: r.fields.Dia_Semana || "",
+      hora: r.fields.Hora || "",
+      fechaInicio: r.fields.Fecha_Inicio || "",
+      activo: !!r.fields.Activo,
+      notas: r.fields.Notas || "",
+    }));
+    res.json(reglas);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/:baseId/turnos-recurrentes", async (req, res) => {
+  try {
+    const { pacienteId, diaSemana, hora, fechaInicio, notas } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Turnos_Recurrentes", {
+      method: "POST",
+      body: {
+        fields: {
+          Paciente: [pacienteId],
+          Dia_Semana: diaSemana,
+          Hora: hora,
+          Fecha_Inicio: fechaInicio,
+          Activo: true,
+          ...(notas ? { Notas: notas } : {}),
+        },
+      },
+    });
+    res.json({ ok: true, id: data.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/turnos-recurrentes/:id/activo", async (req, res) => {
+  try {
+    const { activo } = req.body;
+    await airtableFetch(req.params.baseId, "Turnos_Recurrentes", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: { fields: { Activo: !!activo } },
+    });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
