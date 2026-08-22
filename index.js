@@ -242,6 +242,20 @@ app.post("/api/:baseId/presupuestos", async (req, res) => {
       },
     });
 
+    // Si el cliente estaba marcado como Inactivo (por el chequeo semanal
+    // del Mini-CRM), lo reactivamos: acaba de tener actividad de nuevo,
+    // asi no queda "pegado" en Inactivo para siempre.
+    try {
+      await airtableFetch(baseId, "Clientes", {
+        method: "PATCH",
+        path: `/${clienteId}`,
+        body: { fields: { Estado_Cliente: "Activo" } },
+      });
+    } catch {
+      // Si el cliente no tiene ese campo o falla, no bloqueamos el
+      // presupuesto por esto.
+    }
+
     for (const linea of lineasConProducto) {
       await airtableFetch(baseId, "Items_Presupuestos", {
         method: "POST",
