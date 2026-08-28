@@ -129,6 +129,7 @@ app.get("/api/:baseId/presupuestos", async (req, res) => {
       cobrado: !!r.fields.Cobrado,
       montoCobrado: r.fields.Monto_Cobrado || 0,
       saldoPendiente: r.fields.Saldo_Pendiente || 0,
+      fechaUltimoCobro: r.fields.Fecha_Ultimo_Cobro || "",
     }));
     presupuestos.sort((a, b) => (b.numero || 0) - (a.numero || 0));
     res.json(presupuestos);
