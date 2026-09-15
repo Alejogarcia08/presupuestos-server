@@ -384,6 +384,7 @@ app.get("/api/:baseId/turnos", async (req, res) => {
       notas: r.fields.Notas_Turno || "",
       estado: r.fields.Estado || "Confirmado",
       recordatorioEnviado: !!r.fields.Recordatorio_Enviado,
+      resenaSolicitada: !!r.fields.Resena_Solicitada,
     }));
     // Los mas proximos primero
     turnos.sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
@@ -435,6 +436,19 @@ app.patch("/api/:baseId/turnos/:id/reprogramar", async (req, res) => {
       method: "PATCH",
       path: `/${req.params.id}`,
       body: { fields: { Fecha: fecha, Hora: hora } },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/turnos/:id/resena", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Turnos", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: { fields: { Resena_Solicitada: true } },
     });
     res.json({ ok: true });
   } catch (err) {
@@ -507,6 +521,224 @@ app.patch("/api/:baseId/turnos-recurrentes/:id/activo", async (req, res) => {
       body: { fields: { Activo: !!activo } },
     });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================================
+// MODULO FLOTA Y CONDUCTORES (base separada "Sistema Flota")
+// =========================================================================
+
+app.get("/api/:baseId/vehiculos", async (req, res) => {
+  try {
+    const data = await airtableFetch(req.params.baseId, "Vehiculos");
+    const vehiculos = data.records.map((r) => ({
+      id: r.id,
+      patente: r.fields.Name || "",
+      marcaModelo: r.fields.Marca_Modelo || "",
+      tipo: r.fields.Tipo || "",
+      vtvVencimiento: r.fields.VTV_Vencimiento || "",
+      seguroVencimiento: r.fields.Seguro_Vencimiento || "",
+      serviceProximo: r.fields.Service_Proximo || "",
+      conductorId: (r.fields.Conductor && r.fields.Conductor.length) ? r.fields.Conductor[0] : null,
+      notas: r.fields.Notas || "",
+    }));
+    res.json(vehiculos);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/:baseId/vehiculos", async (req, res) => {
+  try {
+    const { patente, marcaModelo, tipo, vtvVencimiento, seguroVencimiento, serviceProximo, conductorId, notas } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Vehiculos", {
+      method: "POST",
+      body: {
+        fields: {
+          Name: patente,
+          ...(marcaModelo ? { Marca_Modelo: marcaModelo } : {}),
+          ...(tipo ? { Tipo: tipo } : {}),
+          ...(vtvVencimiento ? { VTV_Vencimiento: vtvVencimiento } : {}),
+          ...(seguroVencimiento ? { Seguro_Vencimiento: seguroVencimiento } : {}),
+          ...(serviceProximo ? { Service_Proximo: serviceProximo } : {}),
+          ...(conductorId ? { Conductor: [conductorId] } : {}),
+          ...(notas ? { Notas: notas } : {}),
+        },
+      },
+    });
+    res.json({ id: data.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/vehiculos/:id", async (req, res) => {
+  try {
+    const { patente, marcaModelo, tipo, vtvVencimiento, seguroVencimiento, serviceProximo, conductorId, notas } = req.body;
+    const fields = {};
+    if (patente !== undefined) fields.Name = patente;
+    if (marcaModelo !== undefined) fields.Marca_Modelo = marcaModelo;
+    if (tipo !== undefined) fields.Tipo = tipo;
+    // Airtable rechaza "" para campos de fecha (quiere una fecha valida o
+    // directamente que no le mandemos nada) — por eso mandamos null si
+    // el campo vino vacio.
+    if (vtvVencimiento !== undefined) fields.VTV_Vencimiento = vtvVencimiento || null;
+    if (seguroVencimiento !== undefined) fields.Seguro_Vencimiento = seguroVencimiento || null;
+    if (serviceProximo !== undefined) fields.Service_Proximo = serviceProximo || null;
+    if (conductorId !== undefined) fields.Conductor = conductorId ? [conductorId] : [];
+    if (notas !== undefined) fields.Notas = notas;
+
+    await airtableFetch(req.params.baseId, "Vehiculos", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: { fields },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/:baseId/vehiculos/:id", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Vehiculos", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/:baseId/conductores", async (req, res) => {
+  try {
+    const data = await airtableFetch(req.params.baseId, "Conductores");
+    const conductores = data.records.map((r) => ({
+      id: r.id,
+      nombre: r.fields.Name || "",
+      telefono: r.fields.Telefono || "",
+      email: r.fields.Email || "",
+      licenciaNumero: r.fields.Licencia_Numero || "",
+      licenciaVencimiento: r.fields.Licencia_Vencimiento || "",
+    }));
+    res.json(conductores);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/:baseId/conductores", async (req, res) => {
+  try {
+    const { nombre, telefono, email, licenciaNumero, licenciaVencimiento } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Conductores", {
+      method: "POST",
+      body: {
+        fields: {
+          Name: nombre,
+          ...(telefono ? { Telefono: telefono } : {}),
+          ...(email ? { Email: email } : {}),
+          ...(licenciaNumero ? { Licencia_Numero: licenciaNumero } : {}),
+          ...(licenciaVencimiento ? { Licencia_Vencimiento: licenciaVencimiento } : {}),
+        },
+      },
+    });
+    res.json({ id: data.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/:baseId/conductores/:id", async (req, res) => {
+  try {
+    const { nombre, telefono, email, licenciaNumero, licenciaVencimiento } = req.body;
+    const fields = {};
+    if (nombre !== undefined) fields.Name = nombre;
+    if (telefono !== undefined) fields.Telefono = telefono;
+    if (email !== undefined) fields.Email = email;
+    if (licenciaNumero !== undefined) fields.Licencia_Numero = licenciaNumero;
+    if (licenciaVencimiento !== undefined) fields.Licencia_Vencimiento = licenciaVencimiento;
+
+    await airtableFetch(req.params.baseId, "Conductores", {
+      method: "PATCH",
+      path: `/${req.params.id}`,
+      body: { fields },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/:baseId/conductores/:id", async (req, res) => {
+  try {
+    await airtableFetch(req.params.baseId, "Conductores", {
+      method: "DELETE",
+      path: `/${req.params.id}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/:baseId/checklists", async (req, res) => {
+  try {
+    const data = await airtableFetch(req.params.baseId, "Checklists_Semanales");
+    const checklists = data.records.map((r) => ({
+      id: r.id,
+      vehiculoId: (r.fields.Vehiculo && r.fields.Vehiculo.length) ? r.fields.Vehiculo[0] : null,
+      fecha: r.fields.Fecha || "",
+      presionNeumaticos: !!r.fields.Presion_Neumaticos,
+      aceite: !!r.fields.Aceite,
+      luces: !!r.fields.Luces,
+      toldo: !!r.fields.Toldo,
+      fugas: !!r.fields.Fugas,
+      espejosVidrios: !!r.fields.Espejos_Vidrios,
+      observaciones: r.fields.Observaciones || "",
+      requiereAtencion: !!r.fields.Requiere_Atencion,
+    }));
+    checklists.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    res.json(checklists);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/:baseId/checklists", async (req, res) => {
+  try {
+    const {
+      vehiculoId,
+      fecha,
+      presionNeumaticos,
+      aceite,
+      luces,
+      toldo,
+      fugas,
+      espejosVidrios,
+      observaciones,
+      requiereAtencion,
+    } = req.body;
+    const data = await airtableFetch(req.params.baseId, "Checklists_Semanales", {
+      method: "POST",
+      body: {
+        fields: {
+          Vehiculo: [vehiculoId],
+          Fecha: fecha,
+          Presion_Neumaticos: !!presionNeumaticos,
+          Aceite: !!aceite,
+          Luces: !!luces,
+          Toldo: !!toldo,
+          Fugas: !!fugas,
+          Espejos_Vidrios: !!espejosVidrios,
+          ...(observaciones ? { Observaciones: observaciones } : {}),
+          Requiere_Atencion: !!requiereAtencion,
+        },
+      },
+    });
+    res.json({ id: data.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
